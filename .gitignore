@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment variables - NEVER commit these
+.env
+.env.*
+!.env.example
+
+# Build outputs
+.next/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# K8s secrets (use .env.example pattern instead)
+deploy/k8s/**/*-secret.yaml
+deploy/k8s/**/*-credentials.yaml
+
+# Local dev overrides
+docker-compose.override.yml
