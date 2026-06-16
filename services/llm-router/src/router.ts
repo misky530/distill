@@ -1,79 +1,88 @@
-// services/llm-router/src/router.ts
-// Parallel generation + LLM-as-judge arbitration
+import { DeepSeekProvider } from './providers/deepseek'
+import { QwenProvider } from './providers/qwen'
+import { DoubaoProvider } from './providers/doubao'
+import type { GenerateRequest, GenerateResult } from './providers/types'
 
-import type {
-  GenerateRequest,
-  GenerateResult,
-  JudgeResult,
-  LLMProvider,
-  ModelPlan,
-} from './providers/types'
-
-/**
- * Route to providers based on user plan.
- * free  → DeepSeek only (cost-efficient)
- * pro   → DeepSeek + Qwen in parallel, judge picks winner
- */
-export function resolveProviders(
-  plan: ModelPlan,
-  registry: Map<string, LLMProvider>,
-): LLMProvider[] {
-  if (plan === 'pro') {
-    return ['deepseek', 'qwen']
-      .map((name) => registry.get(name))
-      .filter(Boolean) as LLMProvider[]
-  }
-  const free = registry.get('deepseek')
-  return free ? [free] : []
+export interface JudgeScore {
+  coverage: number   // 0-10
+  structure: number  // 0-10
+  factuality: number // 0-10
+  total: number      // weighted
+  reasoning: string
 }
 
-/**
- * Run all providers in parallel.
- * If one fails, the others still complete — partial results are valid.
- */
-export async function generateParallel(
-  providers: LLMProvider[],
-  req: GenerateRequest,
-): Promise<GenerateResult[]> {
-  const settled = await Promise.allSettled(
-    providers.map((p) => p.generate(req)),
-  )
-
-  return settled
-    .filter((r): r is PromiseFulfilledResult<GenerateResult> => r.status === 'fulfilled')
-    .map((r) => r.value)
+export interface RouterResult {
+  winner: GenerateResult
+  loser: GenerateResult
+  scores: Record<string, JudgeScore>
 }
 
-/**
- * Full pipeline:
- * 1. Resolve providers by plan
- * 2. Generate in parallel
- * 3. If multiple results, run judge
- * 4. Return results + optional judge verdict
- */
-export async function run(
-  req: GenerateRequest,
-  registry: Map<string, LLMProvider>,
-  judge: (results: GenerateResult[], transcript: string) => Promise<JudgeResult>,
-): Promise<{ results: GenerateResult[]; judgment?: JudgeResult }> {
-  const plan = req.plan ?? 'free'
-  const providers = resolveProviders(plan, registry)
+const JUDGE_PROMPT = (a: GenerateResult, b: GenerateResult) => `
+You are an objective judge evaluating two AI-generated summaries of the same video transcript.
 
-  if (providers.length === 0) {
-    throw new Error('No providers available for plan: ' + plan)
+## Output A (${a.provider})
+${a.content}
+
+## Output B (${b.provider})
+${b.content}
+
+Score each output on three dimensions (0-10):
+- Coverage (40%): key points captured from the source
+- Structure (30%): logical organisation, reviewability
+- Factuality (30%): consistency with source, no hallucination
+
+Respond ONLY with valid JSON matching this schema:
+{
+  "${a.provider}": { "coverage": 0, "structure": 0, "factuality": 0, "reasoning": "" },
+  "${b.provider}": { "coverage": 0, "structure": 0, "factuality": 0, "reasoning": "" }
+}
+`.trim()
+
+function weighted(s: Omit<JudgeScore, 'total' | 'reasoning'>): number {
+  return s.coverage * 0.4 + s.structure * 0.3 + s.factuality * 0.3
+}
+
+export class LLMRouter {
+  private deepseek = new DeepSeekProvider()
+  private qwen = new QwenProvider()
+  private judge = new DoubaoProvider()
+
+  /** Pro tier: parallel generation + judge arbitration */
+  async generateWithJudge(req: GenerateRequest): Promise<RouterResult> {
+    const [a, b] = await Promise.all([
+      this.deepseek.generate(req),
+      this.qwen.generate(req),
+    ])
+
+    const judgeRes = await this.judge.generate({
+      messages: [{ role: 'user', content: JUDGE_PROMPT(a, b) }],
+      temperature: 0.1,
+    })
+
+    let raw: Record<string, { coverage: number; structure: number; factuality: number; reasoning: string }>
+    try {
+      raw = JSON.parse(judgeRes.content)
+    } catch {
+      // fallback: pick longer output
+      const winner = a.content.length >= b.content.length ? a : b
+      const loser = winner === a ? b : a
+      return { winner, loser, scores: {} }
+    }
+
+    const scores: Record<string, JudgeScore> = {}
+    for (const [provider, s] of Object.entries(raw)) {
+      scores[provider] = { ...s, total: weighted(s) }
+    }
+
+    const aScore = scores[a.provider]?.total ?? 0
+    const bScore = scores[b.provider]?.total ?? 0
+    const [winner, loser] = aScore >= bScore ? [a, b] : [b, a]
+
+    return { winner, loser, scores }
   }
 
-  const results = await generateParallel(providers, req)
-
-  if (results.length === 0) {
-    throw new Error('All providers failed')
+  /** Free tier: DeepSeek only */
+  async generateFree(req: GenerateRequest): Promise<GenerateResult> {
+    return this.deepseek.generate(req)
   }
-
-  // Only judge when there are multiple results to compare
-  if (results.length > 1) {
-    const judgment = await judge(results, req.transcript)
-    return { results, judgment }
-  }
-
-  return { results }
 }
