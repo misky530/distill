@@ -83,13 +83,77 @@
 1. 如果未来有第二个消费者（比如一个独立的批处理脚本，或者要支持的n8n工作流），这个决策需要重新评估
 2. 当前计划是把router的编排逻辑迁移到 n8n，这意味着"内嵌在Next.js里"只是一个过渡阶段的状态，不是终态
 
-## 5. 一些更轻量的小教训（不构成独立章节，但值得记一笔）
+
+## 5. Docker Compose 部署：七个互不相关的bug连成一条链
+
+### 背景
+
+v3.1开发完成、本地验证通过后，把应用打包成单容器、用docker compose部署到独立服务器。预期这是个"收尾"步骤——结果从`docker compose build`第一次失败到最终成功上线，连续遇到了七个**完全不同性质**的问题，没有一个是重复的，构成了这次开发中信息密度最高的一段debug记录。这里按实际发生顺序记录，因为顺序本身说明了一个道理：**表面上是同一条报错信息反复出现，但背后可能是完全不同的根因**，每次"换一种方式重试"看到的新报错，才是真正向前推进的信号。
+
+### 问题1：apt-get GPG签名校验失败（`At least one invalid signature was encountered`）
+
+第一次build时，`apt-get update`在拉取 `deb.debian.org` 的索引时报GPG签名无效。最初怀疑是镜像源问题，换成阿里云镜像源(`mirrors.aliyun.com`)后**同样的错误又出现一次**——这排除了"是哪个镜像源"的可能性，问题更像是网络传输层（很可能是经过的代理）对内容做了某种篡改或者不完整传输，导致下载到的Release文件签名校验不通过。
+
+最终用 `Acquire::AllowInsecureRepositories=true` 等参数让apt即使签名校验失败也继续加载索引内容，绕过而不是修复这个问题（这是一个**安全妥协**，记录在案：正式生产环境应该追查清楚根因，而不是长期依赖这个绕过手段）。
+
+### 问题2：buildx构建器的网络与宿主机隔离（容器拉取失败但`docker pull`正常）
+
+apt问题解决后，下一次build在拉取`node:20-slim`基础镜像时失败，报`connection refused`。但同时验证`docker pull redis`是成功的——这说明**docker daemon本身的网络是通的，但`docker compose build`走的是完全独立的buildx/buildkit构建器**，它有自己单独的网络命名空间，宿主机配置的代理(`/etc/systemd/system/docker.service.d/proxy.conf`)只对docker daemon生效，对buildx无效。
+
+这是个容易被忽略的架构事实：**docker daemon和buildx builder是两个独立的进程/网络环境**，给一个配代理不代表另一个也会用。最终解法是显式创建一个带代理环境变量的builder：
+
+\`\`\`bash
+docker buildx create --use --name proxybuilder \
+  --driver-opt env.http_proxy=http://代理地址 \
+  --driver-opt env.https_proxy=http://代理地址 \
+  --driver-opt network=host
+\`\`\`
+
+最终实际生效的方案是给docker daemon配置国内registry-mirror（DaoCloud等），完全绕开代理这条路径，比反复调试代理在buildx里如何生效更省时间。
+
+### 问题3：pnpm版本与Node版本不兼容（`No such built-in module: node:sqlite`）
+
+Dockerfile里用的是`corepack prepare pnpm@latest`，"latest"会随时间推移指向越来越新的pnpm版本。这次踩到的具体版本（pnpm 11.7.0）要求Node.js ≥ 22.13，但base镜像固定在`node:20-slim`，版本不匹配导致pnpm内部引用了Node 22才有的`node:sqlite`内置模块，直接崩溃。
+
+**教训**：在Dockerfile里用`@latest`本质上是把"未来某个不确定版本的兼容性"这个风险无限期搁置，迟早会因为base镜像和工具链版本"各自独立演进"而互相冲突。修复是把`pnpm@latest`显式锁定为`pnpm@9`（明确支持Node 20的版本）。这类问题不会在写Dockerfile的当下暴露，只会在某个未来的不确定时间点，因为上游发布了新版本而突然出现——属于"定时炸弹"型的技术债。
+
+### 问题4：意外的pnpm workspace误判（`packages field missing or empty`）
+
+`pnpm build`报错说找不到`packages`字段。根因是`apps/web/`目录下存在一个`pnpm-workspace.yaml`文件——但这个文件的真实用途只是`pnpm approve-builds`命令自动生成的依赖白名单（记录哪些包的postinstall脚本被允许执行），完全没有`packages:`字段，也从来不是用来定义workspace成员的。然而pnpm只要**看到这个文件名存在**，就会认定当前目录是一个workspace根目录，进而要求`packages`字段必须非空。
+
+这是个文件命名撞车导致的语义误判：同一个文件名`pnpm-workspace.yaml`在不同场景下承载了两种完全不相关的配置用途（一种是workspace成员定义，一种是approve-builds的副产物），pnpm没有区分这两种情况，只要文件存在就触发workspace解析逻辑。Dockerfile里直接`COPY apps/web/ ./`把这个文件带进了容器，而容器内构建的是单个独立应用，不需要workspace语义，所以解法是在build stage里直接删除这个继承来的文件。
+
+### 问题5：磁盘空间耗尽，但报错位置和根因不在同一层
+
+`apt-get install`报`E: You don't have enough free space in /var/cache/apt/archives/`。这条报错信息本身是准确的，但定位真正的瓶颈花了一些时间，因为这台服务器有两个独立磁盘——根分区(`/`,18G)和数据分区(`/data`，原70G)，而docker的存储目录(`/var/lib/docker`)被配置在`/data`下，这个分区当时已经被同一台服务器上的其他项目（GitLab、其他容器镜像）占满到100%。
+
+`docker system prune -a -f`清理掉了部分空间，临时解决了build期间的问题，但运行时又遇到了同一类问题的不同表现（见问题7）。这次的教训是：**docker的实际存储路径不一定是默认的`/var/lib/docker`所在分区，必须先确认`docker info | grep "Docker Root Dir"`或者直接看`df -h`里哪个分区被docker相关的overlay文件系统占用**，否则会在错误的分区上反复清理却看不到效果。
+
+### 问题6：构建期模块实例化依赖了运行时环境变量
+
+apt和workspace问题都解决后，`pnpm build`在Next.js的"Collecting page data"阶段报错`ARK_API_KEY is required`。根因是`ArkProvider`的构造函数里写了`if (!apiKey) throw new Error(...)`这行硬性校验——这个设计在本地`pnpm dev`时没有暴露问题（因为`.env.local`一直存在，环境变量随时可用），但Next.js在`next build`阶段会为了静态分析而**实例化**每个API route引用到的模块，这个时间点容器内还没有注入运行时环境变量（它们是docker-compose在容器**启动**时才通过`environment:`字段传入的，构建阶段根本不存在）。
+
+这是一类**容易被忽视的时序问题**：本地开发环境的"环境变量随时都在"这个假设，在"构建"和"运行"被Docker拆成两个独立阶段、且分别拥有不同环境变量集合的场景下并不成立。修复方式是把校验从构造函数推迟到真正发起请求的私有方法里，让模块本身可以在"没有任何密钥"的情况下被安全地实例化，只有真正要使用时才检查密钥是否存在。
+
+### 问题7：只读volume挂载与第三方工具的隐藏写回行为
+
+容器终于跑起来后，第一次真实测试转录功能报`OSError: Read-only file system: '/app/secrets/bilibili-cookies.txt'`。Cookie文件按惯例以`:ro`只读方式挂载进容器（防止容器意外篡改宿主机的敏感凭证文件），但yt-dlp在处理完请求**退出时**，会尝试把更新过的session状态写回它读取cookie时用的那个文件路径——这是yt-dlp自己内部的session管理机制，不是这次代码主动调用的行为，事先完全不知道它有这个"隐藏的副作用"。
+
+这类问题的本质是：**第三方工具的输入文件，有时候并不只是"输入"，工具内部可能假设这个文件同时也是可写的状态存储**，而这个假设在文档里不一定写得明显，往往要等实际跑起来报错才会暴露。修复方案是不让yt-dlp直接操作只读挂载的源文件，而是每次请求开始时把cookie复制一份到当次请求专属的可写临时目录，yt-dlp操作的是这个临时副本，原始挂载文件的只读边界完全不受影响，请求结束后临时副本随整个临时目录一起被清理。
+
+### 这一整条debug链的共同教训
+
+七个问题分布在七个完全不同的层面：网络安全策略（GPG签名）、构建工具架构（buildx网络隔离）、依赖版本兼容性（pnpm/Node）、配置文件语义冲突（workspace误判）、基础设施容量（磁盘空间）、构建/运行时序差异（环境变量）、第三方工具隐藏行为（cookie写回）。没有一个是"重复犯同一个错误"，每一个都是独立的新知识点。
+
+这印证了和B站CDN debug时同样的方法论：**"看起来是同一类报错"不代表"是同一个根因"**，每次解决一层之后冒出来的"新"报错，往往意味着真正在向问题核心推进，而不是在原地打转。同时这次也暴露了一个新的主题——**本地开发环境（`pnpm dev`）和容器化生产环境（Docker build + runtime）之间存在大量"想当然"的隐性假设**（环境变量总是存在、文件总是可写、网络配置自动继承），这些假设在本地从未被打破过，只有在真正容器化部署的那一刻才会集中爆发。这提示了一个更通用的原则：**任何"在我的环境下一直工作正常"的代码，在切换到一个边界条件更严格的新环境（容器、CI、不同操作系统）时，都应该被当作未经验证的代码重新审视**，而不是默认它会自动继续工作。
+
+## 6. 一些更轻量的小教训（不构成独立章节，但值得记一笔）
 
 - **pnpm的`approve-builds`机制**：新版本pnpm默认拦截依赖的postinstall脚本执行（出于供应链安全考虑），这在第一次`pnpm install`时经常让人以为是依赖装失败了，实际上是需要手动跑`pnpm approve-builds`确认。第一次遇到容易浪费时间排查"为什么装不上"。
 - **跨平台命令行语法的反复踩坑**：同一个任务在 PowerShell / CMD / Git Bash 下，反斜杠续行符、多行heredoc、环境变量加载方式（`--env-file`）都不一样，开发过程中反复在三者之间切换导致了多次"命令无法识别"的报错。如果团队/未来的自己主要在Windows开发，提前固定一种shell（建议Git Bash，因为大部分命令片段是Unix语法）会减少很多摩擦。
 - **中文字符不能直接放进HTTP Header**：早期实现里环境变量或某个意外路径把中文字符传进了`fetch`的`headers`对象，触发了`ByteString`编码错误。这类问题报错信息相对隐晦（"character at index N has a value greater than 255"），需要知道这是Header编码限制才能快速定位。
 
-## 6. 附录：v2 K8s/GitOps 基础设施细节（归档，与v3.1提交无关）
+## 7. 附录：v2 K8s/GitOps 基础设施细节（归档，与v3.1提交无关）
 
 > 这部分内容原本在 architecture.md 里有详细篇幅，为了让面向 hackathon 评委的文档（README/devpost-draft）更聚焦产品本身，精简掉了部署细节，挪到这里存档。v3.1（本次提交功能）实际部署在独立服务器上，用 `docker compose up -d`，与下面这套基础设施无关。
 
