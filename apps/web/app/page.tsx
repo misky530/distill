@@ -22,33 +22,67 @@ interface GenerateResponse {
 
 type Tab = 'summary' | 'document' | 'mindmap'
 type Plan = 'free' | 'pro'
-type Status = 'idle' | 'loading' | 'done' | 'error'
+type InputMode = 'text' | 'url'
+type Status = 'idle' | 'transcribing' | 'generating' | 'done' | 'error'
 
 export default function Home() {
+  const [inputMode, setInputMode] = useState<InputMode>('text')
   const [transcript, setTranscript] = useState('')
+  const [videoUrl, setVideoUrl] = useState('')
   const [plan, setPlan] = useState<Plan>('free')
   const [status, setStatus] = useState<Status>('idle')
+  const [errorMsg, setErrorMsg] = useState('')
   const [result, setResult] = useState<GenerateResponse | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('summary')
   const [copied, setCopied] = useState(false)
 
   async function handleGenerate() {
-    if (!transcript.trim()) return
-    setStatus('loading')
     setResult(null)
+    setErrorMsg('')
 
+    let finalTranscript = transcript
+
+    // 如果是URL模式，先转录
+    if (inputMode === 'url') {
+      if (!videoUrl.trim()) return
+      setStatus('transcribing')
+      try {
+        const res = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: videoUrl }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? '转录失败')
+        finalTranscript = data.transcript
+        setTranscript(data.transcript) // 同步填入文本框，方便用户查看/编辑
+      } catch (err) {
+        setErrorMsg(err instanceof Error ? err.message : '转录失败')
+        setStatus('error')
+        return
+      }
+    }
+
+    if (!finalTranscript.trim()) {
+      setErrorMsg('转录文本为空')
+      setStatus('error')
+      return
+    }
+
+    setStatus('generating')
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript, plan }),
+        body: JSON.stringify({ transcript: finalTranscript, plan }),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
+      if (!res.ok) throw new Error(data.error ?? '生成失败')
       setResult(data)
       setStatus('done')
       setActiveTab('summary')
-    } catch {
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : '生成失败')
       setStatus('error')
     }
   }
@@ -66,6 +100,9 @@ export default function Home() {
     setTimeout(() => setCopied(false), 1500)
   }
 
+  const isBusy = status === 'transcribing' || status === 'generating'
+  const canSubmit = inputMode === 'text' ? transcript.trim().length > 0 : videoUrl.trim().length > 0
+
   const winnerScore = result?.scores && result.winner
     ? result.scores[result.winner]?.total
     : null
@@ -78,29 +115,76 @@ export default function Home() {
       </header>
 
       <main className="main">
-        {/* Input */}
+        {/* Input mode switch */}
         <section className="input-section">
-          <label className="input-label" htmlFor="transcript">转录文本</label>
-          <div className="textarea-wrap">
-            <textarea
-              id="transcript"
-              placeholder="粘贴视频转录文本，或直接输入内容……"
-              value={transcript}
-              onChange={e => setTranscript(e.target.value)}
-              disabled={status === 'loading'}
-            />
+          <div className="mode-tabs">
+            <button
+              className={`mode-tab${inputMode === 'text' ? ' active' : ''}`}
+              onClick={() => setInputMode('text')}
+              disabled={isBusy}
+            >
+              文本输入
+            </button>
+            <button
+              className={`mode-tab${inputMode === 'url' ? ' active' : ''}`}
+              onClick={() => setInputMode('url')}
+              disabled={isBusy}
+            >
+              B站/抖音链接
+            </button>
           </div>
+
+          {inputMode === 'text' ? (
+            <>
+              <label className="input-label" htmlFor="transcript">转录文本</label>
+              <div className="textarea-wrap">
+                <textarea
+                  id="transcript"
+                  placeholder="粘贴视频转录文本，或直接输入内容……"
+                  value={transcript}
+                  onChange={e => setTranscript(e.target.value)}
+                  disabled={isBusy}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <label className="input-label" htmlFor="videoUrl">视频链接</label>
+              <input
+                id="videoUrl"
+                className="url-input"
+                type="text"
+                placeholder="粘贴B站或抖音视频链接……"
+                value={videoUrl}
+                onChange={e => setVideoUrl(e.target.value)}
+                disabled={isBusy}
+              />
+              {transcript && (
+                <div className="transcript-preview">
+                  <label className="input-label">转录结果（可编辑后重新生成）</label>
+                  <textarea
+                    value={transcript}
+                    onChange={e => setTranscript(e.target.value)}
+                    disabled={isBusy}
+                  />
+                </div>
+              )}
+            </>
+          )}
+
           <div className="controls">
             <div className="plan-toggle">
               <button
                 className={`plan-btn${plan === 'free' ? ' active' : ''}`}
                 onClick={() => setPlan('free')}
+                disabled={isBusy}
               >
                 free
               </button>
               <button
                 className={`plan-btn${plan === 'pro' ? ' active' : ''}`}
                 onClick={() => setPlan('pro')}
+                disabled={isBusy}
               >
                 pro ✦
               </button>
@@ -108,16 +192,25 @@ export default function Home() {
             <button
               className="generate-btn"
               onClick={handleGenerate}
-              disabled={status === 'loading' || !transcript.trim()}
+              disabled={isBusy || !canSubmit}
             >
-              {status === 'loading' ? '生成中…' : '生成知识'}
+              {status === 'transcribing' ? '转录中…' : status === 'generating' ? '生成中…' : '生成知识'}
             </button>
-            <span className="char-count">{transcript.length} 字</span>
+            {inputMode === 'text' && (
+              <span className="char-count">{transcript.length} 字</span>
+            )}
           </div>
         </section>
 
         {/* Status */}
-        {status === 'loading' && (
+        {status === 'transcribing' && (
+          <div className="status-bar">
+            <div className="status-dot" />
+            正在下载并转录视频，可能需要十几秒…
+          </div>
+        )}
+
+        {status === 'generating' && (
           <div className="status-bar">
             <div className="status-dot" />
             {plan === 'pro'
@@ -129,7 +222,7 @@ export default function Home() {
         {status === 'error' && (
           <div className="status-bar error">
             <div className="status-dot" />
-            生成失败，请检查 API 配置或稍后重试
+            {errorMsg || '处理失败，请稍后重试'}
           </div>
         )}
 
@@ -177,7 +270,6 @@ export default function Home() {
               )}
             </div>
 
-            {/* Judge scores */}
             {result.scores && Object.keys(result.scores).length > 0 && (
               <div className="scores">
                 <div className="scores-title">评分详情</div>
@@ -200,10 +292,9 @@ export default function Home() {
           </div>
         )}
 
-        {/* Empty state */}
         {status === 'idle' && (
           <div className="empty-state">
-            <div>粘贴转录文本，一键生成结构化知识</div>
+            <div>粘贴转录文本或视频链接，一键生成结构化知识</div>
             <div className="hint">free · 单模型 / pro · 双模型 + AI 裁判</div>
           </div>
         )}

@@ -392,3 +392,86 @@ textarea:focus {
   .tagline { display: none; }
   .main { padding: 32px 20px; }
 }
+
+
+/* ── Mode tabs (text/url switch) ── */
+.mode-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mode-tab {
+  padding: 8px 18px;
+  font-size: 13px;
+  font-family: var(--mono);
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition);
+  margin-bottom: -1px;
+}
+
+.mode-tab:hover:not(:disabled) { color: var(--text); }
+
+.mode-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.mode-tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── URL input ── */
+.url-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 14px;
+  padding: 14px 16px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.url-input::placeholder { color: var(--text-muted); }
+
+.url-input:focus {
+  border-color: var(--accent);
+}
+
+.url-input:disabled {
+  opacity: 0.5;
+}
+
+.transcript-preview {
+  margin-top: 20px;
+}
+
+.transcript-preview textarea {
+  width: 100%;
+  min-height: 120px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 14px;
+  resize: vertical;
+  outline: none;
+}
+
+.controls button:disabled,
+.plan-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
