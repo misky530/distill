@@ -32,3 +32,4 @@ deploy/k8s/**/*-credentials.yaml
 
 # Local dev overrides
 docker-compose.override.yml
+*.mp3
