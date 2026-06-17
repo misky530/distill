@@ -29,7 +29,10 @@ ENV NODE_ENV=production
 RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
     sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list 2>/dev/null || true
 
-RUN apt-get update -o Acquire::Check-Valid-Until=false || true
+RUN apt-get -o Acquire::Check-Valid-Until=false \
+    -o Acquire::AllowInsecureRepositories=true \
+    -o Acquire::AllowDowngradeToInsecureRepositories=true \
+    update
 RUN apt-get install -y --no-install-recommends --allow-unauthenticated \
     python3 \
     python3-pip \
