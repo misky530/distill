@@ -91,3 +91,27 @@ pnpm --filter llm-router dev
 ## License
 
 MIT — see [LICENSE](LICENSE)
+
+
+# 启动
+两个服务，两个终端：
+
+**终端 1 — 前端（Next.js）**
+```bash
+cd apps/web
+pnpm dev
+# 访问 http://localhost:3001
+```
+
+**终端 2 — 后端测试（llm-router，仅开发调试用）**
+```bash
+cd services/llm-router
+pnpm exec tsx --env-file=.env test-router.ts
+```
+
+注意：llm-router 不是独立运行的服务，它的代码已经被复制进 `apps/web/lib/`，前端直接内嵌调用。终端 2 只是用来单独测试 router 逻辑，平时只需要跑终端 1 就够了。
+
+**环境变量位置：**
+```
+apps/web/.env.local   ← 前端读这里，pnpm dev 自动加载
+```
