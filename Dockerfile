@@ -2,7 +2,7 @@
 FROM node:20-slim AS deps
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@9 --activate
 
 COPY apps/web/package.json apps/web/pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile || pnpm install
@@ -11,7 +11,7 @@ RUN pnpm install --frozen-lockfile || pnpm install
 FROM node:20-slim AS builder
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@9 --activate
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY apps/web/ ./
