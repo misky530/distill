@@ -2,21 +2,30 @@ import type { LLMProvider, GenerateRequest, GenerateResult, GenerateChunk } from
 
 export class ArkProvider implements LLMProvider {
   name: string
-  private readonly apiKey: string
-  private readonly baseURL: string
   private readonly model: string
 
   constructor(name: string, model: string) {
-    const apiKey = process.env.ARK_API_KEY ?? ''
-    if (!apiKey) throw new Error('ARK_API_KEY is required')
+    // 注意：这里故意不在构造函数里校验 ARK_API_KEY 是否存在。
+    // Next.js 在 `next build` 阶段会为了静态分析而实例化每个 API route 引用的模块，
+    // 此时构建容器内通常还没有注入运行时的环境变量（它们是 docker-compose 在容器启动时才传入的），
+    // 如果在构造函数里强制要求 apiKey 存在，会导致 build 直接失败。
+    // 把校验推迟到真正调用 generate()/stream() 的时刻，构建期就不会受影响。
     this.name = name
-    this.apiKey = apiKey
-    this.baseURL = process.env.ARK_BASE_URL ?? 'https://ark.cn-beijing.volces.com/api/coding/v3'
     this.model = model
   }
 
+  private getApiKey(): string {
+    const apiKey = process.env.ARK_API_KEY ?? ''
+    if (!apiKey) throw new Error('ARK_API_KEY is required')
+    return apiKey
+  }
+
+  private getBaseURL(): string {
+    return process.env.ARK_BASE_URL ?? 'https://ark.cn-beijing.volces.com/api/coding/v3'
+  }
+
   async generate(req: GenerateRequest): Promise<GenerateResult> {
-    const res = await fetch(`${this.baseURL}/chat/completions`, {
+    const res = await fetch(`${this.getBaseURL()}/chat/completions`, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
@@ -49,7 +58,7 @@ export class ArkProvider implements LLMProvider {
   }
 
   async *stream(req: GenerateRequest): AsyncIterable<GenerateChunk> {
-    const res = await fetch(`${this.baseURL}/chat/completions`, {
+    const res = await fetch(`${this.getBaseURL()}/chat/completions`, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
@@ -103,7 +112,7 @@ export class ArkProvider implements LLMProvider {
   private headers() {
     return {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${this.apiKey}`,
+      Authorization: `Bearer ${this.getApiKey()}`,
     }
   }
 }
