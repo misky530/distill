@@ -25,6 +25,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 # 安装运行时依赖：python3(yt-dlp需要) + ffmpeg + curl(健康检查用)
+# 换成阿里云镖像源，规避deb.debian.org的GPG签名校验间歇性失败问题
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list 2>/dev/null || true
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
