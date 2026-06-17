@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+*.md
+.env*
+secrets/
+services/llm-router/node_modules
+deploy/k8s
+docs

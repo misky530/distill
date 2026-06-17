@@ -1,34 +1,34 @@
-version: '3.9'
-
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: distill-web:latest
+    container_name: distill-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
     environment:
-      POSTGRES_USER: distill
-      POSTGRES_PASSWORD: distill
-      POSTGRES_DB: distill
-    ports:
-      - '5432:5432'
+      # ── LLM Router (火山方舟统一网关) ──
+      ARK_API_KEY: ${ARK_API_KEY}
+      ARK_BASE_URL: ${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/coding/v3}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
+      QWEN_MODEL: ${QWEN_MODEL:-kimi-k2.6}
+      DOUBAO_MODEL: ${DOUBAO_MODEL:-doubao-seed-2.0-pro}
+
+      # ── ASR (硅基流动) ──
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY}
+
+      # ── 转录管道 (容器内路径，无需指向宿主机二进制) ──
+      YT_DLP_PATH: yt-dlp
+      FFMPEG_PATH: /usr/bin
+      BILIBILI_COOKIES_PATH: /app/secrets/bilibili-cookies.txt
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # cookie文件挂载：宿主机路径需替换为实际路径，文件不打进镜像
+      - ./secrets/bilibili-cookies.txt:/app/secrets/bilibili-cookies.txt:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U distill']
-      interval: 5s
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
       timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - '6379:6379'
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-volumes:
-  postgres_data:
-  redis_data:
+      start_period: 10s
+      retries: 3

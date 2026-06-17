@@ -10,7 +10,6 @@ const COOKIES = process.env.BILIBILI_COOKIES_PATH ?? ''
 const SF_API_KEY = process.env.SILICONFLOW_API_KEY ?? ''
 const SF_MODEL = 'FunAudioLLM/SenseVoiceSmall'
 
-// 经验值：96kbps音频，每秒约12KB。如果文件时长对应的码率明显偏低，说明下载被截断
 const MIN_DURATION_SECONDS = 10
 
 function downloadAudio(url: string, outputPath: string, attempt: number): Promise<void> {
@@ -22,19 +21,19 @@ function downloadAudio(url: string, outputPath: string, attempt: number): Promis
       '--audio-quality', '0',
       '--output', outputPath,
       '--no-playlist',
-      '--max-filesize', '50m',
       '--proxy', '', // 绕过本地代理，避免CDN截断
       '--force-overwrites', // 防止复用上次失败的缓存文件
       '--no-continue', // 不续传，每次重新完整下载
-      '--no-cache-dir', // 不使用yt-dlp自身缓存
     ]
 
     // 重试时尝试不同策略：第1次用纯音频流，第2次起强制走"视频+音频再提取"路径
-    // (经验上后者在B站CDN异常时更稳定，因为走的是不同的下载逻辑/连接池)
+    // 纯音频流(30280)通常在4-5MB，限制50MB足够；但降级路径要先下整段视频再提取音频，
+    // 视频本身可能远超50MB（取决于清晰度/时长），所以降级路径不施加文件大小限制，
+    // 否则会在真正尝试下载之前就被Aborting，导致重试形同虚设。
     if (attempt === 1) {
-      args.push('-f', '30280/ba')
+      args.push('-f', '30280/ba', '--max-filesize', '50m')
     } else {
-      args.push('-f', 'bv*+ba/b')
+      args.push('-f', 'bv*+ba/b') // 不限制大小，ASR本身会在转录阶段做时长/大小把关
     }
 
     if (COOKIES) {
@@ -91,17 +90,16 @@ async function downloadWithRetry(url: string, outputPath: string, maxAttempts = 
       console.log(`[transcribe] downloaded duration: ${duration}s`)
 
       if (duration >= MIN_DURATION_SECONDS) {
-        return // 下载成功且时长正常
+        return
       }
 
       console.warn(`[transcribe] suspiciously short (${duration}s), retrying...`)
-      lastError = new Error(`下载异常：音频时长仅 ${duration.toFixed(1)} 秒，可能是CDN节点问题`)
+      lastError = new Error(`下载异常：音频时长仅 ${duration.toFixed(1)} 秒，可能是CDN节点问题或文件超出大小限制`)
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err))
       console.error(`[transcribe] attempt ${attempt} failed:`, lastError.message)
     }
 
-    // 重试前等待一下，给CDN负载均衡一个切换节点的机会
     if (attempt < maxAttempts) {
       await new Promise(r => setTimeout(r, 1500))
     }
@@ -162,6 +160,11 @@ export async function POST(req: NextRequest) {
 
     const fileSize = (await stat(audioPath)).size
     console.log('[transcribe] final file size:', fileSize, 'bytes')
+
+    // 转录前的硬上限：硅基流动ASR限制文件不超过50MB、时长不超过1小时
+    if (fileSize > 50 * 1024 * 1024) {
+      throw new Error('提取出的音频超过50MB，硅基流动ASR无法处理，请尝试更短的视频')
+    }
 
     console.log('[transcribe] transcribing...')
     const transcript = await transcribeAudio(audioPath)
