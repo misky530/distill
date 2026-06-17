@@ -89,6 +89,54 @@
 - **跨平台命令行语法的反复踩坑**：同一个任务在 PowerShell / CMD / Git Bash 下，反斜杠续行符、多行heredoc、环境变量加载方式（`--env-file`）都不一样，开发过程中反复在三者之间切换导致了多次"命令无法识别"的报错。如果团队/未来的自己主要在Windows开发，提前固定一种shell（建议Git Bash，因为大部分命令片段是Unix语法）会减少很多摩擦。
 - **中文字符不能直接放进HTTP Header**：早期实现里环境变量或某个意外路径把中文字符传进了`fetch`的`headers`对象，触发了`ByteString`编码错误。这类问题报错信息相对隐晦（"character at index N has a value greater than 255"），需要知道这是Header编码限制才能快速定位。
 
+## 6. 附录：v2 K8s/GitOps 基础设施细节（归档，与v3.1提交无关）
+
+> 这部分内容原本在 architecture.md 里有详细篇幅，为了让面向 hackathon 评委的文档（README/devpost-draft）更聚焦产品本身，精简掉了部署细节，挪到这里存档。v3.1（本次提交功能）实际部署在独立服务器上，用 `docker compose up -d`，与下面这套基础设施无关。
+
+### v2 公网访问链路（服务于其他项目，hackathon期间未改动）
+
+```
+Internet
+  │
+  ▼
+Alibaba Cloud ECS (公网IP)
+  │  nginx 反向代理
+  ▼
+frp tunnel (内网穿透)
+  │
+  ▼
+K8s NodePort (家庭实验室集群，3节点)
+  │
+  ▼
+Pod (Next.js)
+```
+
+### v2 GitOps 发布管道
+
+```
+git push
+  │
+  ▼
+GitLab CI (构建并推送镜像)
+  │
+  ▼
+私有 GitLab Registry
+  │
+  ▼
+ArgoCD (自动同步)
+  │
+  ▼
+K8s Deployment (滚动更新)
+```
+
+每次提交到 `main` 自动部署——这套管道本身没有问题，只是这次 hackathon 决定不用它。
+
+### 这次为什么选择不用它（决策记录）
+
+v3.1 只有一个消费者（这次 hackathon 提交），把它接入现有的 K8s + ArgoCD 管道需要额外的镜像构建/Registry/Deployment配置时间。在临近 deadline、idea和功能完整度才是评分核心的情况下，这部分时间投入收益不成比例，所以选择了最简单的路径：独立服务器 + 手动 `docker compose up -d`。
+
+这不是"不会用K8s"，是一次有意识的优先级排序——hackathon 评委关心的是产品能不能用、idea有没有意思，不是部署链路有多复杂。如果这个项目之后需要长期运维（比如真的有用户在用），再把部署迁回这套GitOps管道是合理的下一步，但不是这次提交需要解决的问题。
+
 ## 写在最后
 
 这次开发暴露的核心主题是：**当你处理别人的基础设施（B站CDN、第三方ASR API、Windows系统层的cookie加密机制）时，大部分bug的根因不在你自己的代码里，而在于这些外部系统的行为假设和你的预期不一致**。无论是CDN偶发返回截断数据、yt-dlp默认行为掩盖了重试失效、还是Windows安全机制让一个曾经能用的功能突然失效——这些都不是"写错代码"导致的，而是"对外部系统的行为模型理解不完整"导致的。这类问题的应对方式通常不是更仔细地写代码，而是**为不确定性设计防御机制**（数据校验、强制重试路径切换、明确的失败阈值），这和纯算法/业务逻辑bug的调试思路是不同的肌肉。

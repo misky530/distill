@@ -35,7 +35,9 @@ The following were built during the FutureAI Global Hackathon 2026:
 
 All three models are accessed through a single unified gateway (Volcano Ark coding plan), differentiated only by model parameter.
 
-Pre-existing foundation (v2, in production before the hackathon): self-hosted 3-node K8s cluster, GitOps pipeline (GitLab CI → ArgoCD), frp ingress. See [docs/architecture.md](docs/architecture.md).
+## Deployment
+
+Runs on a single server via `docker compose up -d`. Simple by design — the focus this hackathon was the product, not the ops.
 
 ## Architecture
 
@@ -84,7 +86,6 @@ pnpm --filter web dev
 |---|---|
 | LLM-as-judge (Doubao) | Third-party judge avoids self-preference bias; scoring is transparent to the user |
 | Download-then-verify ASR pipeline | ffprobe duration check + strategy-switching retry catches a CDN edge case where "exit code 0" doesn't mean "correct data" |
-| K8s + ArgoCD GitOps | Every commit auto-deploys; zero-downtime rolling updates |
 | Embedded LLM Router | Single consumer (the Next.js app) today, so orchestration logic lives in `apps/web/lib/` rather than a separate deployed service — avoids unnecessary network hops and process management for v3 |
 
 ## Known limitations

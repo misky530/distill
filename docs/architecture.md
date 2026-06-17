@@ -53,47 +53,11 @@ transcript (string) → 供 /api/generate 使用
 
 这个管道是 v3.1 阶段踩坑最多、也最值得记录的部分（详见 [EXPERIENCE.md](./EXPERIENCE.md)）。核心难点不是"如何下载视频"，而是"如何确认下载到的是完整视频，而不是CDN返回的截断片段"——这是个静默失败（silent failure）问题：yt-dlp 报告下载成功，文件确实存在且大小合理，但实际播放时长只有5秒。
 
-## v2 Infrastructure（hackathon 前已存在，作为部署基础）
+## 部署
 
-应用运行在自托管的3节点 Kubernetes 集群上，无公网IP，通过以下链路对外提供访问：
+v3.1 部署在一台独立服务器上，用 `docker compose up -d` 启动，域名直接解析过去。手动部署，没有CI/CD——这是为了在 hackathon 时间窗口内优先把功能做出来，不是长期方案。
 
-```
-Internet
-  │
-  ▼
-Alibaba Cloud ECS (公网IP)
-  │  nginx 反向代理
-  ▼
-frp tunnel (内网穿透)
-  │
-  ▼
-K8s NodePort (家庭实验室集群)
-  │
-  ▼
-Pod (Next.js)
-```
-
-### GitOps 发布管道
-
-```
-git push
-  │
-  ▼
-GitLab CI
-  │  构建并推送镜像
-  ▼
-私有 GitLab Registry
-  │
-  ▼
-ArgoCD (自动同步)
-  │
-  ▼
-K8s Deployment (滚动更新)
-```
-
-每次提交到 `main` 自动部署到生产环境——无需手动 `kubectl apply`。
-
-> 注：此部分基础设施在 hackathon 开始前已经存在并投入生产，v3.1 期间未做改动。是否所有 hackathon 期间新增的功能（transcribe/generate pipeline）已经实际部署到这套K8s基础设施上，需要在提交前确认并在 devpost 文案中准确反映。
+> 另有一套自托管 K8s + ArgoCD GitOps 基础设施，服务于其他项目，hackathon 期间未涉及，与 v3.1 的部署无关，故不在此展开。
 
 ## 技术栈总览（更新版，反映实际情况）
 
@@ -108,7 +72,7 @@ K8s Deployment (滚动更新)
 | 进度推送 | 无（SSE未实现） | ❌ Roadmap |
 | 队列 | 无（BullMQ未集成） | ❌ Roadmap |
 | ORM/数据库 | Drizzle ORM + PostgreSQL (pgvector) | ⚠️ 代码骨架存在，未验证是否接入业务逻辑 |
-| 部署基础设施 | Kubernetes (3节点), ArgoCD, GitLab CI, nginx, frp | ✅ v2遗留，hackathon期间未改动 |
+| 部署 | 独立服务器 + docker compose（手动 `up -d`，无CI/CD） | ✅ 已实现 |
 
 ## 已知限制
 
@@ -116,3 +80,4 @@ K8s Deployment (滚动更新)
 - 仅验证了 B站链接，抖音链接的解析逻辑虽然在 `route.ts` 中做了URL校验，但下载/转录流程未实际测试。
 - 长视频（30分钟+）在当前同步HTTP模型下可能触发 Next.js / 反向代理的请求超时，需要异步化才能可靠支持。
 - LLM Router 的三个模型共享同一个火山方舟账号配额，高并发场景下可能互相影响限流。
+- 部署没有CI/CD，更新代码需要手动登录服务器操作；没有健康检查/自动重启，容器异常退出后需要人工介入。这是为赶 hackathon deadline 做的临时简化，不是长期方案。
