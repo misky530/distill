@@ -16,6 +16,11 @@ RUN corepack enable && corepack prepare pnpm@9 --activate
 COPY --from=deps /app/node_modules ./node_modules
 COPY apps/web/ ./
 
+# apps/web/pnpm-workspace.yaml 只是approve-builds生成的依赖白名单，没有packages字段，
+# 但pnpm一旦发现该文件存在就会把当前目录当成workspace根目录、强制要求packages字段非空。
+# 容器内只构建单个app，不需要workspace语义，直接删除该文件即可恢复单包构建行为。
+RUN rm -f pnpm-workspace.yaml
+
 RUN pnpm build
 
 # ── Stage 3: 运行时 ──
