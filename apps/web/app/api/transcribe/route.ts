@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { spawn } from 'child_process'
-import { mkdtemp, rm, readFile, stat } from 'fs/promises'
+import { mkdtemp, rm, readFile, stat, copyFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
 const YT_DLP = process.env.YT_DLP_PATH ?? 'yt-dlp'
 const FFMPEG = process.env.FFMPEG_PATH ?? ''
-const COOKIES = process.env.BILIBILI_COOKIES_PATH ?? ''
+const COOKIES_SOURCE = process.env.BILIBILI_COOKIES_PATH ?? ''
 const SF_API_KEY = process.env.SILICONFLOW_API_KEY ?? ''
 const SF_MODEL = 'FunAudioLLM/SenseVoiceSmall'
 
 const MIN_DURATION_SECONDS = 10
 
-function downloadAudio(url: string, outputPath: string, attempt: number): Promise<void> {
+function downloadAudio(url: string, outputPath: string, attempt: number, cookiesPath: string | null): Promise<void> {
   return new Promise((resolve, reject) => {
     const args = [
       url,
@@ -36,8 +36,10 @@ function downloadAudio(url: string, outputPath: string, attempt: number): Promis
       args.push('-f', 'bv*+ba/b') // 不限制大小，ASR本身会在转录阶段做时长/大小把关
     }
 
-    if (COOKIES) {
-      args.push('--cookies', COOKIES)
+    // 用本次请求的可写副本，不直接用挂载进容器的只读源文件——
+    // yt-dlp在退出时会尝试把session状态写回cookie文件，只读挂载会导致这一步报ENOSPC/EROFS。
+    if (cookiesPath) {
+      args.push('--cookies', cookiesPath)
     }
 
     if (FFMPEG) {
@@ -79,13 +81,13 @@ function getAudioDuration(filePath: string): Promise<number> {
   })
 }
 
-async function downloadWithRetry(url: string, outputPath: string, maxAttempts = 3): Promise<void> {
+async function downloadWithRetry(url: string, outputPath: string, cookiesPath: string | null, maxAttempts = 3): Promise<void> {
   let lastError: Error | null = null
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     console.log(`[transcribe] download attempt ${attempt}/${maxAttempts}`)
     try {
-      await downloadAudio(url, outputPath, attempt)
+      await downloadAudio(url, outputPath, attempt, cookiesPath)
       const duration = await getAudioDuration(outputPath)
       console.log(`[transcribe] downloaded duration: ${duration}s`)
 
@@ -155,8 +157,17 @@ export async function POST(req: NextRequest) {
     tmpDir = await mkdtemp(join(tmpdir(), 'distill-'))
     const audioPath = join(tmpDir, 'audio.mp3')
 
+    // cookie源文件通过只读volume挂载进容器（防止意外写入），但yt-dlp退出时
+    // 会尝试把session状态写回cookie文件本身。这里每次请求都复制一份到当次
+    // 请求的可写临时目录，yt-dlp操作的是副本，原始挂载文件始终保持不变。
+    let cookiesPath: string | null = null
+    if (COOKIES_SOURCE) {
+      cookiesPath = join(tmpDir, 'cookies.txt')
+      await copyFile(COOKIES_SOURCE, cookiesPath)
+    }
+
     console.log('[transcribe] downloading:', url)
-    await downloadWithRetry(url, audioPath)
+    await downloadWithRetry(url, audioPath, cookiesPath)
 
     const fileSize = (await stat(audioPath)).size
     console.log('[transcribe] final file size:', fileSize, 'bytes')
