@@ -33,3 +33,9 @@ deploy/k8s/**/*-credentials.yaml
 # Local dev overrides
 docker-compose.override.yml
 *.mp3
+
+# Cookie files - contain live session credentials, never commit
+bilibili-cookies.txt
+cookies_www.bilibili.com.txt
+*.cookies.txt
+cookies_*.txt
