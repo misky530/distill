@@ -53,29 +53,36 @@ transcript (string) → 供 /api/generate 使用
 
 这个管道是 v3.1 阶段踩坑最多、也最值得记录的部分（详见 [EXPERIENCE.md](./EXPERIENCE.md)）。核心难点不是"如何下载视频"，而是"如何确认下载到的是完整视频，而不是CDN返回的截断片段"——这是个静默失败（silent failure）问题：yt-dlp 报告下载成功，文件确实存在且大小合理，但实际播放时长只有5秒。
 
-## 部署方案
+## v3.1 部署架构（hackathon 提交实际使用）
 
-应用通过 Docker Compose 单容器部署：
+应用部署在一台独立服务器上，通过 Docker Compose 启动，无公网IP，通过以下链路对外提供访问：
 
 ```
-docker-compose.yml
+Internet
   │
   ▼
-Dockerfile (多阶段构建)
-  │  Stage 1-2: pnpm install + Next.js build (standalone输出)
-  │  Stage 3: 运行时镜像，安装 yt-dlp + ffmpeg + python3
-  ▼
-distill-web 容器
-  │  Next.js standalone server (port 3000)
+wd-ai.cloud (DNS → Alibaba Cloud ECS 公网IP)
   │
-  └── Volume挂载: bilibili-cookies.txt (只读，不打进镜像)
+  ▼
+nginx (ECS, 反向代理 + TLS termination)
+  │
+  ▼
+frps (ECS) ←── frp tunnel ──→ frpc (独立部署服务器)
+                                    │
+                                    ▼
+                              docker compose up -d
+                                    │
+                                    ▼
+                              Next.js 容器 (127.0.0.1:3000)
 ```
 
-关键说明：
+部署方式是手动 `docker compose up -d`，没有CI/CD自动化、没有滚动更新——对当前提交规模而言足够，复杂的GitOps流程不是本次提交的必要部分。
 
-- **yt-dlp/ffmpeg 打进镜像**：转录管道依赖的两个二进制工具在 Dockerfile 的运行时阶段通过 `apt`/`pip` 安装，构建期会校验 `yt-dlp --version` 和 `ffmpeg -version` 确保安装成功，避免运行时才发现依赖缺失。
-- **cookie 通过 volume 挂载，不打进镜像**：B站登录cookie是敏感凭证且会过期，打进镜像会导致每次cookie刷新都要重新构建镜像。当前方案是在宿主机准备好cookie文件，启动容器时只读挂载进去，更新cookie只需替换宿主机文件、重启容器，不需要重新build。
-- **单账号cookie的已知限制**：当前用的是开发者个人的B站登录cookie，所有用户的转录请求共享同一个账号的登录态和限流额度。这是hackathon阶段的合理简化，但不适合真实多用户生产场景——真实上线时应该让用户自带cookie，或者直接支持上传本地视频文件，绕开"模拟用户在外部平台的登录态"这个脆弱依赖。
+> 已验证：domain → nginx → frp → 部署服务器 → 容器，全链路端到端可用，hackathon期间新增的 transcribe/generate 功能已部署在生产环境并可访问。
+
+## 其他已有基础设施（与本次提交无关）
+
+自托管的3节点 Kubernetes 集群、GitLab CI、ArgoCD GitOps 流水线在 hackathon 之前已经存在并运行其他项目，但**未用于本次提交**。Distill v3.1 选择更简单的 Docker Compose 部署方式，原因是当前阶段单实例、无需自动扩缩容/滚动更新，引入K8s的运维复杂度没有对应收益。这套K8s基础设施的存在与否不影响本次submission的功能完整性评估。
 
 ## 技术栈总览（更新版，反映实际情况）
 
@@ -86,21 +93,15 @@ distill-web 容器
 | LLM 模型 | DeepSeek-v4-pro, Kimi-k2.6, Doubao-seed-2.0-pro（均通过火山方舟统一网关） | ✅ 已实现 |
 | ASR | 硅基流动云端API（FunAudioLLM/SenseVoiceSmall） | ✅ 已实现 |
 | 视频下载 | yt-dlp + cookie认证 + 格式降级重试 | ✅ 已实现（仅B站，抖音未测试） |
-| 部署 | Docker Compose（单容器，多阶段构建） | ✅ 已实现 |
 | 异步处理 | 无（同步HTTP阻塞） | ❌ Roadmap |
 | 进度推送 | 无（SSE未实现） | ❌ Roadmap |
 | 队列 | 无（BullMQ未集成） | ❌ Roadmap |
 | ORM/数据库 | Drizzle ORM + PostgreSQL (pgvector) | ⚠️ 代码骨架存在，未验证是否接入业务逻辑 |
+| 部署基础设施 | Docker Compose（独立服务器） + nginx + frp | ✅ 已部署并验证（v3.1提交所用方式） |
 
 ## 已知限制
 
-- 转录管道目前依赖手动维护的 B站 cookie 文件，cookie 过期后需要重新从浏览器导出，没有自动刷新机制；且当前是开发者个人账号cookie，所有用户共享同一登录态（仅适用于hackathon demo场景）。
+- 转录管道目前依赖手动维护的 B站 cookie 文件，cookie 过期后需要重新从浏览器导出，没有自动刷新机制。
 - 仅验证了 B站链接，抖音链接的解析逻辑虽然在 `route.ts` 中做了URL校验，但下载/转录流程未实际测试。
-- 长视频（30分钟+）在当前同步HTTP模型下可能触发请求超时，需要异步化才能可靠支持。
+- 长视频（30分钟+）在当前同步HTTP模型下可能触发 Next.js / 反向代理的请求超时，需要异步化才能可靠支持。
 - LLM Router 的三个模型共享同一个火山方舟账号配额，高并发场景下可能互相影响限流。
-
-## Roadmap（真实上线方向）
-
-- 去掉开发者个人cookie依赖：支持用户自带cookie，或直接支持上传本地视频/音频文件，绕开模拟登录态的脆弱性
-- 异步任务队列 + 进度推送（BullMQ/SSE），支持长视频
-- LLM Router 编排逻辑迁移至 n8n，便于可视化编排和接入新模型
