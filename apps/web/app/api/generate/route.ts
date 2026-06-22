@@ -89,9 +89,19 @@ export async function POST(req: NextRequest) {
         mindmap: '',
       }
 
+      // loser的内容同样走JSON提取，保持和winner一致的解析逻辑，
+      // 这样前端拿到的两份数据结构完全对称，不需要额外的兜底分支
+      const loserContent = extractJsonContent(result.loser.content) ?? {
+        summary: result.loser.content,
+        document: '',
+        mindmap: '',
+      }
+
       return NextResponse.json({
         content,
         winner: result.winner.provider,
+        loser: result.loser.provider,
+        loserContent,
         scores: result.scores,
       })
     } else {

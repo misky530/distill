@@ -42,13 +42,13 @@ function weighted(s: Omit<JudgeScore, 'total' | 'reasoning'>): number {
 
 export class LLMRouter {
   private deepseek = new ArkProvider('deepseek', process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro')
-  private qwen = new ArkProvider('qwen', process.env.QWEN_MODEL ?? 'kimi-k2.6')
+  private kimi = new ArkProvider('kimi', process.env.KIMI_MODEL ?? 'kimi-k2.6')
   private judge = new ArkProvider('doubao', process.env.DOUBAO_MODEL ?? 'doubao-seed-2.0-pro')
 
   async generateWithJudge(req: GenerateRequest): Promise<RouterResult> {
     const [a, b] = await Promise.all([
       this.deepseek.generate(req),
-      this.qwen.generate(req),
+      this.kimi.generate(req),
     ])
 
     const judgeRes = await this.judge.generate({

@@ -11,6 +11,8 @@ interface GenerateContent {
 interface GenerateResponse {
   content: GenerateContent
   winner?: string
+  loser?: string
+  loserContent?: GenerateContent
   scores?: Record<string, {
     coverage: number
     structure: number
@@ -35,10 +37,13 @@ export default function Home() {
   const [result, setResult] = useState<GenerateResponse | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('summary')
   const [copied, setCopied] = useState(false)
+  const [showLoser, setShowLoser] = useState(false)
+  const [loserTab, setLoserTab] = useState<Tab>('summary')
 
   async function handleGenerate() {
     setResult(null)
     setErrorMsg('')
+    setShowLoser(false)
 
     let finalTranscript = transcript
 
@@ -81,6 +86,7 @@ export default function Home() {
       setResult(data)
       setStatus('done')
       setActiveTab('summary')
+      setLoserTab('summary')
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : '生成失败')
       setStatus('error')
@@ -105,6 +111,10 @@ export default function Home() {
 
   const winnerScore = result?.scores && result.winner
     ? result.scores[result.winner]?.total
+    : null
+
+  const loserScore = result?.scores && result.loser
+    ? result.scores[result.loser]?.total
     : null
 
   return (
@@ -287,6 +297,61 @@ export default function Home() {
                       <span className="score-num">{score.total.toFixed(1)}</span>
                     </div>
                   ))}
+              </div>
+            )}
+
+            {result.loser && result.loserContent && (
+              <div className="loser-panel">
+                <button
+                  className="loser-toggle"
+                  onClick={() => setShowLoser(v => !v)}
+                  aria-expanded={showLoser}
+                >
+                  <span>
+                    查看 {result.loser} 的输出
+                    {loserScore !== null && (
+                      <span style={{ opacity: 0.6 }}> （综合评分 {loserScore.toFixed(1)} / 10）</span>
+                    )}
+                  </span>
+                  <span className={`loser-chevron${showLoser ? ' open' : ''}`}>▾</span>
+                </button>
+
+                {showLoser && (
+                  <div className="loser-body">
+                    <div className="tabs">
+                      {(['summary', 'document', 'mindmap'] as Tab[]).map(t => (
+                        <button
+                          key={t}
+                          className={`tab${loserTab === t ? ' active' : ''}`}
+                          onClick={() => setLoserTab(t)}
+                        >
+                          {t === 'summary' ? '摘要' : t === 'document' ? '学习笔记' : '思维导图'}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="tab-content">
+                      {loserTab === 'summary' && (
+                        <div className="summary-text">{result.loserContent.summary}</div>
+                      )}
+                      {loserTab === 'document' && (
+                        <div className="document-content">{result.loserContent.document}</div>
+                      )}
+                      {loserTab === 'mindmap' && (
+                        <div className="mindmap-content">
+                          <pre className="mindmap-code">{result.loserContent.mindmap}</pre>
+                        </div>
+                      )}
+                    </div>
+
+                    {result.scores?.[result.loser]?.reasoning && (
+                      <div className="loser-reasoning">
+                        <span className="loser-reasoning-label">裁判评语：</span>
+                        {result.scores[result.loser].reasoning}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
