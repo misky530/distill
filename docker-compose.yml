@@ -13,15 +13,14 @@ services:
       ARK_API_KEY: ${ARK_API_KEY}
       ARK_BASE_URL: ${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/coding/v3}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
-      QWEN_MODEL: ${QWEN_MODEL:-kimi-k2.6}
+      KIMI_MODEL: ${KIMI_MODEL:-kimi-k2.6}
       DOUBAO_MODEL: ${DOUBAO_MODEL:-doubao-seed-2.0-pro}
-
       # ── ASR (硅基流动) ──
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY}
-
       # ── 转录管道 (容器内路径，无需指向宿主机二进制) ──
       YT_DLP_PATH: yt-dlp
-      FFMPEG_PATH: /usr/bin
+      FFMPEG_PATH: /usr/bin/ffmpeg
+      FFPROBE_PATH: /usr/bin/ffprobe
       BILIBILI_COOKIES_PATH: /app/secrets/bilibili-cookies.txt
     volumes:
       # cookie文件挂载：宿主机路径需替换为实际路径，文件不打进镜像
