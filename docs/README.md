@@ -35,7 +35,9 @@ The following were built during the FutureAI Global Hackathon 2026:
 
 All three models are accessed through a single unified gateway (Volcano Ark coding plan), differentiated only by model parameter.
 
-Deployment: Docker Compose on a dedicated server, with frp tunneling to expose it through a no-public-IP setup. See [docs/architecture.md](docs/architecture.md).
+## Deployment
+
+Runs on a dedicated server via `docker compose up -d`. Simple by design — the focus this hackathon was the product, not the ops.
 
 ## Architecture
 
@@ -84,7 +86,6 @@ pnpm --filter web dev
 |---|---|
 | LLM-as-judge (Doubao) | Third-party judge avoids self-preference bias; scoring is transparent to the user |
 | Download-then-verify ASR pipeline | ffprobe duration check + strategy-switching retry catches a CDN edge case where "exit code 0" doesn't mean "correct data" |
-| Docker Compose + frp | No public IP required; nginx → frp tunnel → containerized app, deployed and verified end-to-end |
 | Embedded LLM Router | Single consumer (the Next.js app) today, so orchestration logic lives in `apps/web/lib/` rather than a separate deployed service — avoids unnecessary network hops and process management for v3 |
 
 ## Known limitations

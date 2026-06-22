@@ -13,7 +13,7 @@ Distill — Turn Any Video into Knowledge
 
 ## 2. Elevator Pitch（200字符以内）
 ```
-Paste a video link, get structured knowledge: AI transcribes, summarizes, and generates mind maps in minutes. Built for students drowning in 3-hour lectures. Live in production, self-hosted infra + multi-LLM judge.
+Paste a video link, get structured knowledge: AI transcribes, summarizes, and generates mind maps in minutes. Built for students drowning in 3-hour lectures. Two LLMs compete, a third judges — live in production.
 ```
 
 ---
@@ -37,25 +37,21 @@ The product is live at https://wd-ai.cloud.
 
 ## How we built it
 
-**Built during this hackathon (v3):**
 - A **multi-model LLM orchestration layer**: DeepSeek and Kimi generate in parallel on the same transcript, with Doubao acting as an independent judge that scores both outputs on coverage, structure, and factuality before picking a winner
 - **End-to-end Bilibili ingestion pipeline**: paste a video URL, and the system downloads the audio (yt-dlp), transcribes it via a cloud ASR API (SiliconFlow, running the SenseVoiceSmall model), and feeds the transcript straight into the LLM router — no manual transcript copy-pasting required
-- New **Next.js 15 (App Router)** frontend with TypeScript, covering both direct-text input and URL-based ingestion in a single interface
-
-**Also part of this hackathon's submission:**
-- Production deployment via Docker Compose on a dedicated server, exposed through an frp tunnel + nginx reverse proxy on Alibaba Cloud ECS — solving a no-public-IP constraint without requiring a cloud load balancer
-- Verified end-to-end: domain → nginx → frp tunnel → containerized app, confirmed working in production before submission
+- A **Next.js 15 (App Router)** frontend with TypeScript, covering both direct-text input and URL-based ingestion in a single interface
+- All three models run through a single unified gateway (Volcano Ark), differentiated only by model parameter — simplifying key management for a solo-maintained project
+- Deployed on a dedicated server via Docker Compose
 
 ## Challenges we ran into
 
 - **Silent data corruption from an unstable CDN edge**: our video-to-audio pipeline would occasionally report a successful download — correct exit code, plausible file size — while the actual audio was a truncated 5-second stub instead of the full lecture. The failure mode wasn't a crash; it was confidently wrong data. We added a post-download duration check (via ffprobe) with an automatic retry that deliberately switches download strategy on each attempt, plus explicit cache invalidation so retries don't just re-serve the same bad file. The bigger lesson: "the process exited 0" is not the same guarantee as "the data is correct," and any pipeline ingesting third-party media needs a validation step that's independent of the tool's own success signal.
 - **Mermaid rendering reliability**: LLMs love generating invalid graph syntax. Constraining output to a strict tree structure dramatically reduced render failures.
 - **Prompt structure vs. content diversity**: forcing a fixed What/Why/How template degraded quality on general-purpose videos; we switched to adaptive structuring based on content type.
-- **Wiring up a no-public-IP deployment**: getting the domain → nginx → frp tunnel → container chain working end-to-end required tracing through each hop individually (DNS, TLS termination, tunnel registration, local port binding) since a failure at any layer looks the same from the outside — "the site doesn't load."
 
 ## What we learned
 
-Shipping an AI product solo means the bottleneck is rarely the model — it's orchestration, output reliability, and the unglamorous edges of third-party integrations. The hardest bugs weren't in our own logic; they were in trusting that an external system (a CDN, a download tool's caching behavior) did what it claimed. Building defensively — validating outputs instead of just trusting exit codes — turned out to matter more than getting the LLM prompts exactly right on the first try. Prompt engineering is empirical: measure, don't assume. And even a simple deployment chain (nginx → tunnel → container) needs each hop verified individually, since a break anywhere in it just looks like "the site is down" from the outside.
+Shipping an AI product solo means the bottleneck is rarely the model — it's orchestration, output reliability, and the unglamorous edges of third-party integrations. The hardest bugs weren't in our own logic; they were in trusting that an external system (a CDN, a download tool's caching behavior) did what it claimed. Building defensively — validating outputs instead of just trusting exit codes — turned out to matter more than getting the LLM prompts exactly right on the first try. Prompt engineering is empirical: measure, don't assume.
 
 ## What's next
 
@@ -69,7 +65,7 @@ Shipping an AI product solo means the bottleneck is rarely the model — it's or
 
 ## 4. Built With 标签（逗号分隔，填入 Devpost 标签框）
 ```
-nextjs, typescript, docker, docker-compose, frp, nginx, deepseek, siliconflow, mermaid, yt-dlp
+nextjs, typescript, deepseek, siliconflow, mermaid, yt-dlp
 ```
 
 ---
@@ -82,25 +78,25 @@ nextjs, typescript, docker, docker-compose, frp, nginx, deepseek, siliconflow, m
 
 ## 6. 待办事项（提交前必须完成）
 - [x] GitHub 仓库建好后替换第5条链接
+- [x] 确认 hackathon 期间新增的 transcribe/generate 功能已部署到 wd-ai.cloud 生产环境并验证可用
 - [ ] 录制 demo 视频上传 YouTube，填入 Video demo link
-- [ ] 上传产品截图到 Image gallery（思维导图页、双模型对比页、架构图、文档输出页）
-- [x] 确认 hackathon 期间新增的 transcribe/generate 功能是否已部署到 wd-ai.cloud 生产环境，确保评委访问的是真实可用的完整功能
+- [ ] 上传产品截图到 Image gallery（思维导图页、双模型对比页、文档输出页）
 - [ ] 确保 wd-ai.cloud 首页有英文入口，评委无需注册可体验 demo
 - [ ] 7月3日前完成首次提交（留48小时缓冲）
 
 ---
 
-## 7. Demo 视频分镜脚本（3分钟，待根据实际功能调整，移除SSE进度条描述）
+## 7. Demo 视频分镜脚本（3分钟，待根据实际功能调整）
 
 | 时间 | 画面 | 内容 |
 |---|---|---|
 | 0:00-0:20 | 痛点场景 | B站3小时考研课程页面，字幕："3-hour lectures. Zero notes. Sound familiar?" |
 | 0:20-0:50 | 核心流程 | 贴入B站链接 → 点击生成知识 → 显示转录文本 |
 | 0:50-1:30 | 结果展示 | 摘要 → 结构化文档 → 思维导图依次展开 |
-| 1:30-2:00 | v3 亮点 | 双模型对比评分展示，字幕："Two models compete, an independent judge picks the winner" |
-| 2:00-2:40 | 技术底牌 | 架构图 + wd-ai.cloud 生产环境实际访问画面，字幕："Self-hosted deployment, no public IP required, solo-built" |
+| 1:30-2:10 | v3 亮点 | 双模型对比评分展示，字幕："Two models compete, an independent judge picks the winner" |
+| 2:10-2:40 | 产品深挖 | 切换文本输入模式 / 不同视频类型的自适应摘要结构，字幕："Built solo: multi-LLM orchestration + a CDN edge case most teams would miss" |
 | 2:40-3:00 | 收尾 | 产品 URL + GitHub 链接，"Distill — turn any video into knowledge" |
 
 ---
 
-*最后更新：2026年6月17日*
+*最后更新：2026年6月22日*

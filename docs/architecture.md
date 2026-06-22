@@ -53,36 +53,11 @@ transcript (string) → 供 /api/generate 使用
 
 这个管道是 v3.1 阶段踩坑最多、也最值得记录的部分（详见 [EXPERIENCE.md](./EXPERIENCE.md)）。核心难点不是"如何下载视频"，而是"如何确认下载到的是完整视频，而不是CDN返回的截断片段"——这是个静默失败（silent failure）问题：yt-dlp 报告下载成功，文件确实存在且大小合理，但实际播放时长只有5秒。
 
-## v3.1 部署架构（hackathon 提交实际使用）
+## 部署
 
-应用部署在一台独立服务器上，通过 Docker Compose 启动，无公网IP，通过以下链路对外提供访问：
+部署在一台独立服务器上，用 `docker compose up -d` 启动，通过既有的 nginx + frp 隧道对外暴露（域名 → ECS → nginx → frp → 服务器 → 容器）。手动部署，没有CI/CD，这是为了在 hackathon 时间窗口内优先把功能做出来，不是长期方案。
 
-```
-Internet
-  │
-  ▼
-wd-ai.cloud (DNS → Alibaba Cloud ECS 公网IP)
-  │
-  ▼
-nginx (ECS, 反向代理 + TLS termination)
-  │
-  ▼
-frps (ECS) ←── frp tunnel ──→ frpc (独立部署服务器)
-                                    │
-                                    ▼
-                              docker compose up -d
-                                    │
-                                    ▼
-                              Next.js 容器 (127.0.0.1:3000)
-```
-
-部署方式是手动 `docker compose up -d`，没有CI/CD自动化、没有滚动更新——对当前提交规模而言足够，复杂的GitOps流程不是本次提交的必要部分。
-
-> 已验证：domain → nginx → frp → 部署服务器 → 容器，全链路端到端可用，hackathon期间新增的 transcribe/generate 功能已部署在生产环境并可访问。
-
-## 其他已有基础设施（与本次提交无关）
-
-自托管的3节点 Kubernetes 集群、GitLab CI、ArgoCD GitOps 流水线在 hackathon 之前已经存在并运行其他项目，但**未用于本次提交**。Distill v3.1 选择更简单的 Docker Compose 部署方式，原因是当前阶段单实例、无需自动扩缩容/滚动更新，引入K8s的运维复杂度没有对应收益。这套K8s基础设施的存在与否不影响本次submission的功能完整性评估。
+> 另有一套自托管 K8s + ArgoCD GitOps 基础设施，服务于其他项目，与本次提交无关，故不在此展开。
 
 ## 技术栈总览（更新版，反映实际情况）
 
@@ -97,7 +72,7 @@ frps (ECS) ←── frp tunnel ──→ frpc (独立部署服务器)
 | 进度推送 | 无（SSE未实现） | ❌ Roadmap |
 | 队列 | 无（BullMQ未集成） | ❌ Roadmap |
 | ORM/数据库 | Drizzle ORM + PostgreSQL (pgvector) | ⚠️ 代码骨架存在，未验证是否接入业务逻辑 |
-| 部署基础设施 | Docker Compose（独立服务器） + nginx + frp | ✅ 已部署并验证（v3.1提交所用方式） |
+| 部署 | 独立服务器 + docker compose（手动 `up -d`，无CI/CD） | ✅ 已实现 |
 
 ## 已知限制
 
@@ -105,3 +80,4 @@ frps (ECS) ←── frp tunnel ──→ frpc (独立部署服务器)
 - 仅验证了 B站链接，抖音链接的解析逻辑虽然在 `route.ts` 中做了URL校验，但下载/转录流程未实际测试。
 - 长视频（30分钟+）在当前同步HTTP模型下可能触发 Next.js / 反向代理的请求超时，需要异步化才能可靠支持。
 - LLM Router 的三个模型共享同一个火山方舟账号配额，高并发场景下可能互相影响限流。
+- 部署没有CI/CD，更新代码需要手动登录服务器操作；没有健康检查/自动重启，容器异常退出后需要人工介入。这是为赶 hackathon deadline 做的临时简化，不是长期方案。
