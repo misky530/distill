@@ -93,6 +93,7 @@ pnpm --filter web dev
 - Bilibili only — Douyin URL validation exists in code but the download/transcription path is untested.
 - Processing is synchronous HTTP; long videos (30min+) may hit request timeouts. Async queueing is on the roadmap, not yet implemented.
 - Requires a manually exported Bilibili cookie file (no auto-refresh); see [docs/EXPERIENCE.md](docs/EXPERIENCE.md) for why `--cookies-from-browser` doesn't work on Windows.
+- Pro mode (dual-LLM generation + judge scoring) can take 3-5 minutes end-to-end, with only a static status message — no progress bar. This is expected given three sequential/parallel LLM calls, but worth knowing before testing it live.
 
 ## Roadmap
 
