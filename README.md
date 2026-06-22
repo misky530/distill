@@ -37,7 +37,7 @@ All three models are accessed through a single unified gateway (Volcano Ark codi
 
 ## Deployment
 
-Runs on a single server via `docker compose up -d`. Simple by design — the focus this hackathon was the product, not the ops.
+Runs on a dedicated server via `docker compose up -d`. Simple by design — the focus this hackathon was the product, not the ops.
 
 ## Architecture
 
