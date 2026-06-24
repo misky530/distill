@@ -3,6 +3,7 @@ import { spawn } from "child_process";
 import { mkdtemp, rm, readFile, stat, copyFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
+import https from "https";
 
 const YT_DLP = process.env.YT_DLP_PATH ?? "yt-dlp";
 const FFMPEG = process.env.FFMPEG_PATH ?? "";
@@ -142,32 +143,86 @@ async function downloadWithRetry(
   throw lastError ?? new Error("下载失败，已达最大重试次数");
 }
 
-async function transcribeAudio(filePath: string): Promise<string> {
-  const audioBuffer = await readFile(filePath);
-  const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
-
-  const form = new FormData();
-  form.append("file", blob, "audio.mp3");
-  form.append("model", SF_MODEL);
-
-  const res = await fetch(
-    "https://api.siliconflow.cn/v1/audio/transcriptions",
-    {
+function postToSiliconFlow(body: Buffer, boundary: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const options: https.RequestOptions = {
+      hostname: "api.siliconflow.cn",
+      path: "/v1/audio/transcriptions",
       method: "POST",
       headers: {
         Authorization: `Bearer ${SF_API_KEY}`,
+        "Content-Type": `multipart/form-data; boundary=${boundary}`,
+        "Content-Length": body.length,
       },
-      body: form,
-    },
-  );
+    };
 
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`SiliconFlow ASR error ${res.status}: ${body}`);
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        const status = res.statusCode ?? 0;
+        if (status >= 200 && status < 300) {
+          try {
+            resolve(JSON.parse(data).text as string);
+          } catch {
+            reject(new Error(`SiliconFlow返回了非JSON响应: ${data}`));
+          }
+        } else {
+          reject(
+            new Error(
+              `SiliconFlow ASR error ${status}${data ? `: ${data}` : "（空响应体）"}`,
+            ),
+          );
+        }
+      });
+    });
+
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+async function transcribeAudio(filePath: string): Promise<string> {
+  const audioBuffer = await readFile(filePath);
+  const maxAttempts = 3;
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const boundary = `----distill${Date.now().toString(16)}`;
+    const preamble = Buffer.from(
+      `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="model"\r\n\r\n` +
+        `${SF_MODEL}\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file"; filename="audio.mp3"\r\n` +
+        `Content-Type: audio/mpeg\r\n\r\n`,
+    );
+    const epilogue = Buffer.from(`\r\n--${boundary}--\r\n`);
+    const body = Buffer.concat([preamble, audioBuffer, epilogue]);
+
+    try {
+      return await postToSiliconFlow(body, boundary);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.error(
+        `[transcribe] ASR attempt ${attempt}/${maxAttempts} failed:`,
+        lastError.message,
+      );
+
+      const statusMatch = lastError.message.match(/error (\d+)/);
+      const status = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+      if (![500, 502, 503, 504].includes(status)) {
+        throw lastError;
+      }
+    }
+
+    if (attempt < maxAttempts) {
+      await new Promise((r) => setTimeout(r, 2000 * attempt));
+    }
   }
 
-  const data = await res.json();
-  return data.text as string;
+  throw lastError ?? new Error("ASR转录失败，已达最大重试次数");
 }
 
 export async function POST(req: NextRequest) {
