@@ -1,12 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { LLMRouter } from '@/lib/llm-router'
+import { NextRequest, NextResponse } from "next/server";
+import { LLMRouter } from "@/lib/llm-router";
 
-const router = new LLMRouter()
+const router = new LLMRouter();
 
 interface ParsedContent {
-  summary: string
-  document: string
-  mindmap: string
+  summary: string;
+  document: string;
+  mindmap: string;
 }
 
 /**
@@ -21,51 +21,125 @@ interface ParsedContent {
 function extractJsonContent(raw: string): ParsedContent | null {
   // 策略1：直接解析（理想情况）
   try {
-    const parsed = JSON.parse(raw)
-    if (parsed.summary !== undefined) return parsed
+    const parsed = JSON.parse(raw);
+    if (parsed.summary !== undefined) return parsed;
   } catch {
     // 继续尝试其他策略
   }
 
   // 策略2：剥离markdown代码块包裹 ```json ... ``` 或 ``` ... ```
-  const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+  const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (codeBlockMatch) {
     try {
-      const parsed = JSON.parse(codeBlockMatch[1])
-      if (parsed.summary !== undefined) return parsed
+      const parsed = JSON.parse(codeBlockMatch[1]);
+      if (parsed.summary !== undefined) return parsed;
     } catch {
       // 继续尝试
     }
   }
 
   // 策略3：提取第一个 { 到最后一个 } 之间的内容（应对前后有解释性文字的情况）
-  const firstBrace = raw.indexOf('{')
-  const lastBrace = raw.lastIndexOf('}')
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
   if (firstBrace !== -1 && lastBrace > firstBrace) {
     try {
-      const parsed = JSON.parse(raw.slice(firstBrace, lastBrace + 1))
-      if (parsed.summary !== undefined) return parsed
+      const parsed = JSON.parse(raw.slice(firstBrace, lastBrace + 1));
+      if (parsed.summary !== undefined) return parsed;
+    } catch {
+      // 继续尝试策略4
+    }
+  }
+
+  // 策略4：兜底——清理字符串内部未转义的换行/tab后再尝试一次
+  // （应对策略1-3全部失败的情况：模型输出的多行markdown内容包含裸换行符，
+  // 导致JSON.parse在字符串值内部遇到非法控制字符直接抛错）
+  try {
+    const sanitized = sanitizeUnescapedControlChars(raw);
+    const parsed = JSON.parse(sanitized);
+    if (parsed.summary !== undefined) return parsed;
+  } catch {
+    // 继续尝试结合大括号截取
+  }
+
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      const sliced = raw.slice(firstBrace, lastBrace + 1);
+      const sanitized = sanitizeUnescapedControlChars(sliced);
+      const parsed = JSON.parse(sanitized);
+      if (parsed.summary !== undefined) return parsed;
     } catch {
       // 全部失败，交给调用方做最终fallback
     }
   }
 
-  return null
+  return null;
+}
+
+/**
+ * 逐字符扫描，只在"位于JSON字符串值内部"时把裸控制字符（换行/回车/tab）
+ * 转义成合法形式，不在字符串内部的换行（即JSON结构本身的格式化换行）保持原样。
+ * 这是修复"LLM输出的多行markdown内容破坏JSON合法性"的标准做法。
+ */
+function sanitizeUnescapedControlChars(raw: string): string {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inString) {
+      if (escaped) {
+        result += ch;
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        result += ch;
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+        result += ch;
+        continue;
+      }
+      if (ch === "\n") {
+        result += "\\n";
+        continue;
+      }
+      if (ch === "\r") {
+        result += "\\r";
+        continue;
+      }
+      if (ch === "\t") {
+        result += "\\t";
+        continue;
+      }
+      result += ch;
+    } else {
+      if (ch === '"') {
+        inString = true;
+      }
+      result += ch;
+    }
+  }
+  return result;
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json()
-  const { transcript, plan } = body
+  const body = await req.json();
+  const { transcript, plan } = body;
 
-  if (!transcript || typeof transcript !== 'string') {
-    return NextResponse.json({ error: 'transcript is required' }, { status: 400 })
+  if (!transcript || typeof transcript !== "string") {
+    return NextResponse.json(
+      { error: "transcript is required" },
+      { status: 400 },
+    );
   }
 
   const messages = [
     {
-      role: 'system' as const,
+      role: "system" as const,
       content: `你是一个专业的学习助手。请根据以下视频转录文本，生成结构化知识输出。
-
 严格按以下 JSON 格式输出，不要有任何其他内容，不要用markdown代码块包裹：
 {
   "summary": "摘要，200字以内",
@@ -74,49 +148,44 @@ export async function POST(req: NextRequest) {
 }`,
     },
     {
-      role: 'user' as const,
+      role: "user" as const,
       content: transcript,
     },
-  ]
+  ];
 
   try {
-    if (plan === 'pro') {
-      const result = await router.generateWithJudge({ messages })
-
+    if (plan === "pro") {
+      const result = await router.generateWithJudge({ messages });
       const content = extractJsonContent(result.winner.content) ?? {
         summary: result.winner.content,
-        document: '',
-        mindmap: '',
-      }
-
+        document: "",
+        mindmap: "",
+      };
       // loser的内容同样走JSON提取，保持和winner一致的解析逻辑，
       // 这样前端拿到的两份数据结构完全对称，不需要额外的兜底分支
       const loserContent = extractJsonContent(result.loser.content) ?? {
         summary: result.loser.content,
-        document: '',
-        mindmap: '',
-      }
-
+        document: "",
+        mindmap: "",
+      };
       return NextResponse.json({
         content,
         winner: result.winner.provider,
         loser: result.loser.provider,
         loserContent,
         scores: result.scores,
-      })
+      });
     } else {
-      const result = await router.generateFree({ messages })
-
+      const result = await router.generateFree({ messages });
       const content = extractJsonContent(result.content) ?? {
         summary: result.content,
-        document: '',
-        mindmap: '',
-      }
-
-      return NextResponse.json({ content })
+        document: "",
+        mindmap: "",
+      };
+      return NextResponse.json({ content });
     }
   } catch (err) {
-    console.error('[generate]', err)
-    return NextResponse.json({ error: 'generation failed' }, { status: 500 })
+    console.error("[generate]", err);
+    return NextResponse.json({ error: "generation failed" }, { status: 500 });
   }
 }
