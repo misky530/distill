@@ -3,6 +3,7 @@
 import { useState } from "react";
 import MermaidDiagram from "../components/MermaidDiagram";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface GenerateContent {
   summary: string;
@@ -298,7 +299,9 @@ export default function Home() {
 
               {activeTab === "document" && (
                 <div className="document-content">
-                  <ReactMarkdown>{result.content.document}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {result.content.document}
+                  </ReactMarkdown>
                 </div>
               )}
 
@@ -380,7 +383,7 @@ export default function Home() {
                       )}
                       {loserTab === "document" && (
                         <div className="document-content">
-                          <ReactMarkdown>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {result.loserContent.document}
                           </ReactMarkdown>
                         </div>
