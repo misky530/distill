@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import MermaidDiagram from "../components/MermaidDiagram";
+import ReactMarkdown from "react-markdown";
 
 interface GenerateContent {
   summary: string;
@@ -297,7 +298,7 @@ export default function Home() {
 
               {activeTab === "document" && (
                 <div className="document-content">
-                  {result.content.document}
+                  <ReactMarkdown>{result.content.document}</ReactMarkdown>
                 </div>
               )}
 
@@ -379,7 +380,9 @@ export default function Home() {
                       )}
                       {loserTab === "document" && (
                         <div className="document-content">
-                          {result.loserContent.document}
+                          <ReactMarkdown>
+                            {result.loserContent.document}
+                          </ReactMarkdown>
                         </div>
                       )}
                       {loserTab === "mindmap" && (
